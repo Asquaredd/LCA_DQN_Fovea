@@ -4,7 +4,7 @@ LCA-DQN(with or without fovea) to play Atari Pong
 
 # How to run
 
-1. Create two new folders named __dict__ and __model__(for single-resolution) or __track_model__(for multi-resolution) to save LCA dictionay and DQN weights
+1. Create two new folders named __dict__ and __model__ (for single-resolution) or __track_model__ (for multi-resolution) to save LCA dictionay and DQN weights
 
 2. Run main.py to train LCA and LCA-DQN. 
 
