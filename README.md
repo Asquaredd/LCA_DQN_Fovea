@@ -1,8 +1,10 @@
 # LCA_DQN_fovea
+## This is a Fork of rpchen0128 repo. 
+
 LCA-DQN(with or without fovea) to play Atari Pong
 
 
-# How to run
+# How to run 
 
 1. Create two new folders named __dict__ and __model__ (for single-resolution) or __track_model__ (for multi-resolution) to save LCA dictionay and DQN weights
 
