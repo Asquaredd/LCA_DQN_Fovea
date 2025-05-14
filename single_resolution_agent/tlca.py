@@ -1,13 +1,34 @@
 import torch
 import numpy as np
 import time
-# import skvideo.io
+import skvideo.io
 from skimage import transform
-
+import ale_py
+from ale_py import ALEInterface
+ale = ALEInterface()
+import gymnasium as gym5
 
 
 def resize_frame(frame,new_size):
+    # Debugging: Log the shape of the frame before reshaping
+    #print(f"Debug: Frame shape before reshaping: {frame.shape}")
+    
+    # Handle the case where the frame has a shape of (160,)
+    if frame.shape == (160,):
+        frame = frame.reshape((160, 1))  # Adjust this based on the expected dimensions
+    elif len(frame.shape) == 1:
+        frame = frame.reshape((210, 160))  # Assuming the original frame size is 210x160
+
     obs = frame[34:194,5:-5]
+
+    # Check if obs is empty or improperly formatted
+    if obs.size == 0:
+        raise ValueError("Observation is empty. Check the environment's output.")
+
+    # Debugging: Log the shape of obs
+    #
+    # print(f"Debug: Observation shape: {obs.shape}")
+
     frame=np.zeros((new_size,new_size))
     
     amplitude=0.5
@@ -203,44 +224,45 @@ def video_save(v, output_name):
 
 
 
-def train_model(model,input_size,epoch,
-                num_sample,input_v,device,t_dict_update=10):
-    order_sample=np.linspace(0,num_sample-1,num_sample,dtype=int)
-    
+def train_model(model, input_size, epoch, num_sample, input_v, device, t_dict_update=10):
+    order_sample = np.linspace(0, num_sample - 1, num_sample, dtype=int)
+    epoch_errors = []  # Collect errors for each epoch
+
     for t in range(epoch):
-        #start time
-        time_start=time.time()
-        print('epoch='+str(t+1))
-        e_epoch=0
+        time_start = time.time()
+        print('epoch=' + str(t + 1))
+        e_epoch = 0
         np.random.shuffle(order_sample)
+
         for j in order_sample:
-            
-            video_piece=input_v[j]
-            if np.max(video_piece)==0:
+            video_piece = input_v[j]
+            if np.max(video_piece) == 0:
                 continue
-            inputdata=(torch.from_numpy(video_piece).reshape((input_size,1)).float())   
-            inputdata=inputdata.to(device)
-        
+
+            inputdata = (torch.from_numpy(video_piece).reshape((input_size, 1)).float())
+            inputdata = inputdata.to(device)
+
             model.initialize(inputdata)
-     
+
             for i in range(t_dict_update):
                 model.update_au(inputdata)
-                if (i+1) % t_dict_update == 0 :
-                    e_epoch+=model.error(inputdata)
+                if (i + 1) % t_dict_update == 0:
+                    e_epoch += model.error(inputdata).sum()
                     model.update_dict(inputdata)
-                    
-                    model.u=torch.zeros(model.dict_size,1).to(device)
-                    model.a=torch.zeros(model.dict_size,1).to(device)
-            
-        r_e=e_epoch/(num_sample)
-        
-        time_end=time.time()
-        localtime = time.asctime( time.localtime(time.time()) )
-        print (localtime)
-        print('total time',time_end-time_start)
-        print('cost =', r_e.cpu().numpy()[0])
-        
-    return model
+
+                    model.u = torch.zeros(model.dict_size, 1).to(device)
+                    model.a = torch.zeros(model.dict_size, 1).to(device)
+
+        r_e = e_epoch / num_sample
+        epoch_errors.append(r_e.cpu().numpy())  # Append the error for this epoch
+
+        time_end = time.time()
+        localtime = time.asctime(time.localtime(time.time()))
+        print(localtime)
+        print('total time', time_end - time_start)
+        print('cost =', r_e.cpu().numpy())
+
+    return epoch_errors  # Return the list of errors for all epochs
 
 
 

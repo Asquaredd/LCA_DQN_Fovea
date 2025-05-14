@@ -1,6 +1,12 @@
 import train_lca
 import train_lca_dqn
 import torch
+import ale_py 
+from ale_py import ALEInterface
+ale = ALEInterface()
+import gymnasium as gym
+import h5py
+import numpy as np
 
 torch.set_num_threads(4)
 
@@ -42,14 +48,14 @@ threshold = 1.3
 
 #Create training set and train LCA
 
-train_lca.create_training_set(trainingset_steps, target_size, frame_analyze, patch_size, x_paddle)
-train_lca.train_LCA(threshold, overcomplete, epoch_lca,device)
+#train_lca.create_training_set(trainingset_steps, target_size, frame_analyze, patch_size, x_paddle)
+#train_lca.train_LCA(threshold, overcomplete, epoch_lca,device)
 
-
+#train_lca.check_paddle_location(steps=500, outputsize=target_size)
 
 #test reconstruction performance (reconstruct video)
 
-# train_lca.test_LCA(patch_size,frame_analyze,target_size,threshold)
+#train_lca.test_LCA(patch_size,frame_analyze,target_size,threshold, device)
 
 # print('\n=================================')
 # print('\nVideo reconstructed by LCA is in the folder\n')
@@ -66,7 +72,7 @@ print('\n=================================')
 print('\nBegin to train LCA-DQN\n')
 print('=================================\n')
 
-train_lca_dqn.train_LCA_DQN(threshold,overcomplete,patch_size,target_size,frame_analyze,device)
+#train_lca_dqn.train_LCA_DQN(threshold,overcomplete,patch_size,target_size,frame_analyze,device)
 print('\n=================================')
 print('\nFinish training\n')
 print('=================================\n')
@@ -79,7 +85,7 @@ print('\n=================================')
 print('\nBegin to evaluate LCA-DQN\n')
 print('=================================\n')
 
-train_lca_dqn.evaluate_LCA_DQN(threshold,overcomplete,patch_size,target_size,frame_analyze,device)
+#train_lca_dqn.evaluate_LCA_DQN(threshold,overcomplete,patch_size,target_size,frame_analyze,device, selected_episodes=range(1920, 2001, 40))
 print('\n=================================')
 print('\nFinish evaluation\n')
 print('=================================\n')
@@ -89,8 +95,18 @@ print('\nBegin to evaluate the best LCA-DQN\n')
 print('=================================\n')
 
 
-train_lca_dqn.evaluate_LCA_DQN_best(threshold,overcomplete,patch_size,target_size,frame_analyze,device)
+#train_lca_dqn.evaluate_LCA_DQN_best(threshold,overcomplete,patch_size,target_size,frame_analyze,device)
 print('\n=================================')
 print('\nFinish evaluation\n')
+print('=================================\n')
+
+print('\n=================================')
+print('\nRun game with best model from .h5 file\n')
+print('=================================\n')
+
+train_lca_dqn.run_game_with_h5("idk/reward_best_40_2.h5", threshold, overcomplete, patch_size, target_size, frame_analyze, device)
+
+print('\n=================================')
+print('\nFinished running game with best model\n')
 print('=================================\n')
 

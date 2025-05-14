@@ -5,11 +5,15 @@ import torch.nn.functional as F
 from collections import namedtuple
 import tlca
 import gym, random, os.path, math
+import gymnasium as gym
 import h5py
 from itertools import count
 import numpy as np 
 import time
 import matplotlib.pyplot as plt
+import ale_py
+from ale_py import ALEInterface
+ale = ALEInterface()
  
 Transition = namedtuple('Transion', ('state', 'action', 'next_state', 'reward'))
 
@@ -33,7 +37,7 @@ e_episode: number of evaluation episode for every weights
 
 """
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 GAMMA = 0.99
 TARGET_UPDATE = 1000
 lr = 0.2*1e-3
@@ -47,8 +51,8 @@ EPS_DECAY = 1000000
 
 RENDER = False
 n_episode = 3001
-e_episode = 20
-e_episode_final = 1000
+e_episode = 10
+e_episode_final = 3100
 
 
 MODEL_STORE_PATH = os.getcwd()
@@ -158,7 +162,7 @@ class DQN_agent():
         epsilon = EPS_END + (EPS_START - EPS_END)* \
             math.exp(-1. * self.stepdone / EPS_DECAY) 
         
-        # print(epsilon)
+        print(epsilon)
         if random.random()<epsilon:
             action = torch.tensor([[random.randrange(self.action_dim)]], device=self.device, dtype=torch.long)
         else:
@@ -205,6 +209,10 @@ class DQN_agent():
             param.grad.data.clamp_(-1, 1)
         
         self.optimizer.step()
+
+        if not hasattr(self, 'loss_list'):
+            self.loss_list = []
+        self.loss_list.append(loss.item())
     
            
 class Trainer():
@@ -230,7 +238,26 @@ class Trainer():
         self.start=time.time()
         self.end=time.time()
         
-        
+        self.checkpoint_path = os.path.join(MODEL_STORE_PATH, 'checkpoint.pth')
+
+    def save_checkpoint(self, episode):
+        checkpoint = {
+            'episode': episode,
+            'model_state_dict': self.agent.DQN.state_dict(),
+            'optimizer_state_dict': self.agent.optimizer.state_dict(),
+            'reward_list': self.rewardlist
+        }
+        torch.save(checkpoint, self.checkpoint_path)
+
+    def load_checkpoint(self):
+        if os.path.exists(self.checkpoint_path):
+            checkpoint = torch.load(self.checkpoint_path)
+            self.agent.DQN.load_state_dict(checkpoint['model_state_dict'])
+            self.agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.rewardlist = checkpoint['reward_list']
+            return checkpoint['episode']
+        return 0
+
     def get_state(self,obs):
         
         t_u=10
@@ -245,13 +272,14 @@ class Trainer():
         a_state=torch.reshape(a_state,(self.dn,self.ni,self.ni))
         a_state=torch.unsqueeze(a_state,0).cpu()
         
-        return a_state    
+        return a_state
         
     def train(self):
+        start_episode = self.load_checkpoint()
 
-        for episode in range(0,self.n_episode):
+        for episode in range(start_episode, self.n_episode):
             
-            obs = self.env.reset()
+            obs, info = self.env.reset()
             state = self.get_state(obs)
             episode_reward = 0.0
             
@@ -262,7 +290,10 @@ class Trainer():
                     self.env.render()
                 
                 
-                obs,reward,done,info = self.env.step(action)
+                obs, reward, done, truncated, info = self.env.step(action)
+                # Debugging: Log the observation returned by env.step()
+                #print(f"Debug: Observation after step: {obs}")
+                done = done or truncated
                 episode_reward += reward
                 
                 if not done:
@@ -294,16 +325,23 @@ class Trainer():
                     break
             
             if episode % 20 == 0:
+                self.save_checkpoint(episode)
                 localtime = time.asctime( time.localtime(time.time()) )
                 print (localtime)
                 self.end=time.time()
                 print('total time',self.end-self.start)
                 torch.save(self.agent.DQN.state_dict(), MODEL_STORE_PATH + '/' + "model/{}_episode{}.pt".format(modelname, episode))
-                print('Total steps: {} \t Episode: {}/{} \t Total reward: {}'.format(self.agent.stepdone, episode, t, episode_reward))
+                epsilon = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.agent.stepdone / EPS_DECAY)
+                print(f'Total steps: {self.agent.stepdone} \t Episode: {episode}/{self.n_episode} \t Total reward: {episode_reward} \t Epsilon: {epsilon}')
                 self.start=time.time()
-                hdffile=h5py.File('rewardlist.h5','w')
-                hdffile.create_dataset('data',data=self.rewardlist)
-                hdffile.close()
+                self.plot_rewardlist()
+                self.plot_epsilon_decay()
+
+            if episode % 50 == 0:
+                self.plot_reward_trend()
+
+            if hasattr(self.agent, 'loss_list') and episode % 50 == 0:
+                self.plot_loss_curve(self.agent.loss_list)
             
                 
             
@@ -325,29 +363,94 @@ class Trainer():
     
     
     def plot_rewardlist(self):
-        
-        dictfile=h5py.File('rewardlist.h5','r')
-        rewardlist1=np.array([dictfile['data']])[0,:]
-        dictfile.close() 
+        step = len(self.rewardlist)
+        x = np.linspace(0, step - 1, step)
+        y = self.smooth(self.rewardlist, step)
 
-        step1 = rewardlist1.shape[0]
-        x1=np.linspace(0, step1-1, step1)
-        y1=self.smooth(rewardlist1,step1)
+        plt.figure(figsize=(10, 5))
+        plt.plot(x, y, color='b')
 
-
-        plt.figure(figsize=(10,5))
-        plt.plot(x1,y1,color='b')
-                
-        plt.ylim([-21,21])
-        plt.xlim([0,int(self.n_episode)])
+        plt.ylim([-21, 21])
+        plt.xlim([0, int(self.n_episode)])
 
         plt.xticks(fontsize=15)
         plt.yticks(fontsize=15)
-        plt.ylabel('reward',fontsize=15)
-        plt.xlabel('episode',fontsize=15)
+        plt.ylabel('Reward', fontsize=15)
+        plt.xlabel('Episode', fontsize=15)
 
-        plt.savefig('rewardlist.png',dpi=150)
+        plt.savefig('rewardlist.png', dpi=150)
+        plt.close()
 
+    def plot_epsilon_decay(self):
+        steps = np.arange(1, self.agent.stepdone + 1)
+        epsilon_values = EPS_END + (EPS_START - EPS_END) * np.exp(-1. * steps / EPS_DECAY)
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(steps, epsilon_values, color='g', label='Epsilon Decay')
+        plt.xlabel('Steps', fontsize=15)
+        plt.ylabel('Epsilon', fontsize=15)
+        plt.title('Epsilon Decay Over Time', fontsize=15)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.savefig('epsilon_decay.png', dpi=150)
+        plt.close()
+
+    def plot_q_values(self):
+        plt.figure(figsize=(10, 5))
+        plt.hist(self.q[1:], bins=30, color='b', alpha=0.7, label='Q-Values')
+        plt.xlabel('Q-Value', fontsize=15)
+        plt.ylabel('Frequency', fontsize=15)
+        plt.title('Q-Value Distribution', fontsize=15)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.savefig('q_value_distribution.png', dpi=150)
+        plt.close()
+
+    def plot_reward_trend(self):
+        rewards = np.array(self.rewardlist)
+        episodes = np.arange(len(rewards))
+        
+        # Smooth rewards using a moving average
+        window_size = 50  # Adjust the window size as needed
+        if len(rewards) < window_size:
+            print("Not enough rewards to plot a trend. Skipping plot.")
+            return
+
+        mean_rewards = np.convolve(rewards, np.ones(window_size) / window_size, mode='valid')
+        std_rewards = np.std(rewards[:len(mean_rewards)])
+
+        # Adjust the x-axis to match the length of mean_rewards
+        x = episodes[:len(mean_rewards)]
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(x, mean_rewards, color='b', label='Mean Reward')
+        plt.fill_between(x, mean_rewards - std_rewards, mean_rewards + std_rewards, color='b', alpha=0.2, label='Confidence Interval')
+        plt.xlabel('Episode', fontsize=15)
+        plt.ylabel('Reward', fontsize=15)
+        plt.title('Reward Trend with Confidence Interval', fontsize=15)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.savefig('reward_trend.png', dpi=150)
+        plt.close()
+
+    def plot_loss_curve(self, loss_list):
+        plt.figure(figsize=(10, 5))
+        plt.plot(loss_list, color='r', label='Loss')
+        plt.xlabel('Training Steps', fontsize=15)
+        plt.ylabel('Loss', fontsize=15)
+        plt.title('Loss Curve', fontsize=15)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.savefig('loss_curve.png', dpi=150)
+        plt.close()
 
 
 class DQN_agent_test():
@@ -461,32 +564,33 @@ class Evaluator():
 
         for episode in range(0,self.n_episode):
             
-            obs = self.env.reset()
+            obs, info = self.env.reset()
             state = self.get_state(obs)
             episode_reward = 0.0
             
             for t in count():  
                            
-                action,q = self.agent.select_action(state)
-                self.q=np.append(self.q,q)
+                action, q = self.agent.select_action(state)
+                self.q = np.append(self.q, q)
                 if RENDER:
                     self.env.render()
                 
                 
-                obs,reward,done,info = self.env.step(action)
+                obs, reward, done, truncated, info = self.env.step(action)
+                done = done or truncated
                 episode_reward += reward
-                if reward!=0:
-                    self.score=np.append(self.score,reward)
+                if reward != 0:
+                    self.score = np.append(self.score, reward)
                 
                 if not done:
                     next_state = self.get_state(obs)
                 else:
                     next_state = None
-                    self.frame_state=np.zeros((self.sc,self.p_s*self.p_s*self.fa))
+                    self.frame_state = np.zeros((self.sc, self.p_s * self.p_s * self.fa))
                     
-                    if episode%50==0:
-                        print('epoch='+str(episode))
-                        print('reward='+str(episode_reward))
+                    if episode % 50 == 0:
+                        print('epoch=' + str(episode))
+                        print('reward=' + str(episode_reward))
                         
                 
                 state = next_state
@@ -499,15 +603,30 @@ class Evaluator():
             self.q=np.zeros((1))
             self.rewardlist.append(episode_reward)
             
+            if episode % 50 == 0:
+                self.plot_q_values()
             
             self.env.close()
         return r_reward,q_value,self.score[1:101]
     
+    def plot_q_values(self):
+        plt.figure(figsize=(10, 5))
+        plt.hist(self.q[1:], bins=30, color='b', alpha=0.7, label='Q-Values')
+        plt.xlabel('Q-Value', fontsize=15)
+        plt.ylabel('Frequency', fontsize=15)
+        plt.title('Q-Value Distribution', fontsize=15)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.savefig('q_value_distribution.png', dpi=150)
+        plt.close()
+
     def plot_average_reward(self):
         
-        hdffile=h5py.File('DQN_lca_Pong_reward_'+str(self.n_episode)+'.h5','r')
-        reward=np.array([hdffile['reward']])[0,:,:]
-        hdffile.close()
+        dictfile=h5py.File('DQN_lca_Pong_reward_'+str(self.n_episode)+'.h5','r')
+        reward=np.array([dictfile['reward']])[0,:,:]
+        dictfile.close()
         
         x=np.linspace(0,self.n_episode,int(self.n_episode/40+1))
 
@@ -526,14 +645,15 @@ class Evaluator():
         plt.savefig('evaluation_result.png',dpi=200)
 
 
-
-
-
 def train_LCA_DQN(th,overcomplete,patch_size,target_size,frame_analyze,devicename):
+    
+    gym.register_envs(ale_py)
     
     device=torch.device(devicename)
     # create environment
-    env = gym.make("ALE/Pong-v5",obs_type='grayscale') #,render_mode='human',frameskip=4
+    env = gym.make("ALE/Pong-v5", obs_type='grayscale', difficulty=0) # ,render_mode='human',frameskip=4
+    print(env.action_space.n)           # → 6
+    print(env.unwrapped.get_action_meanings())
     action_space = env.action_space
     
     #load lca dictionary
@@ -557,80 +677,89 @@ def train_LCA_DQN(th,overcomplete,patch_size,target_size,frame_analyze,devicenam
     trainer.train()
     
     ### comment when don't need visualization
-    # trainer.plot_rewardlist()
+    trainer.plot_rewardlist()
     
 
       
-def evaluate_LCA_DQN(th,overcomplete,patch_size,target_size,frame_analyze,devicename):
-    device=torch.device(devicename)
-    # create environment
-    env = gym.make("ALE/Pong-v5",obs_type='grayscale') #,render_mode='human',frameskip=4
+def evaluate_LCA_DQN(th, overcomplete, patch_size, target_size, frame_analyze, devicename, selected_episodes=None):
+    gym.register_envs(ale_py)
+    device = torch.device(devicename)
+
+    # Create environment with human render mode
+    env = gym.make("ALE/Pong-v5", obs_type='grayscale', difficulty=0, frameskip=4, render_mode='human')
     action_space = env.action_space
-    
-    #get lca dictionary
-    dictfile=h5py.File('dict/dict'+str(th)+'.h5','r')
-    dictionary=np.array([dictfile['dictionary']])[0,:,:]
+
+    # Load LCA dictionary
+    dictfile = h5py.File(f'dict/dict{th}.h5', 'r')
+    dictionary = np.array([dictfile['dictionary']])[0, :, :]
     dictfile.close()
-    
-    
-    num_image=int(target_size/patch_size)
-    input_size=dictionary.shape[0]
-    dictionary_size=dictionary.shape[1]
+
+    num_image = int(target_size / patch_size)
+    input_size = dictionary.shape[0]
+    dictionary_size = dictionary.shape[1]
     num_patch = int(num_image**2)
-    
-    dictionary=torch.from_numpy(dictionary).to(device)
-    start=time.time()
-    end=time.time()
-    
-    """run every weights for 10 times"""
-    num_e=76  #test weights saved every 40 episode. 3000/40+1=76
-    reward_record=np.zeros((num_e,e_episode))
-    q_record=np.zeros((num_e,e_episode))
-    score_record=np.zeros((num_e,100))
-    
-    for i in range(0,num_e):
-        p_str=str(i*40)
-    
-        madel_path = MODEL_STORE_PATH + '/' + 'model/' + 'DQN_Pong_episode'+p_str+'.pt'
-        agent = DQN_agent_test(num_image,devicename, madel_path,in_channels = dictionary_size, action_space= action_space, memory_size=MEMORY_SIZE)
-        lca=tlca.TLCA(input_size,dictionary_size,th,dictionary,num_patch,device)
-        
-        evaluator = Evaluator(env, agent, e_episode, num_patch, patch_size, frame_analyze,lca,num_image,dictionary_size,device)
-        reward_record[i,:],q_record[i,:],score_record[i,:] = evaluator.evaluate()
-        
-        localtime = time.asctime( time.localtime(time.time()) )
-        print (localtime)
-        end=time.time()
-        print('total time',end-start)
-        print('episode='+p_str+' is done')
-        print('average reward='+str(reward_record[i,:].mean()))
-        print('average q='+str(q_record[i,:].mean()))
-        start=time.time()
-        
-        hdffile=h5py.File('reward_play_'+str(target_size)+'_'+str(frame_analyze)+'.h5','w')
-        hdffile.create_dataset('reward',data=reward_record)
-        hdffile.create_dataset('q',data=q_record)
-        hdffile.create_dataset('score',data=score_record)
-        hdffile.close()
-        
-        ### comment when don't need visualization
-        
-        # if i == (num_e-1):
-        #     evaluator.plot_average_reward()
+
+    dictionary = torch.from_numpy(dictionary).to(device)
+    start = time.time()
+
+    # Use selected episodes or default range
+    if selected_episodes is None:
+        selected_episodes = range(1000, 2001, 40)  # Default range
+
+    num_e = len(selected_episodes)
+    reward_record = np.zeros((num_e, e_episode))
+    q_record = np.zeros((num_e, e_episode))
+    score_record = np.zeros((num_e, 100))
+
+    for i, episode in enumerate(selected_episodes):
+        model_path = os.path.join(MODEL_STORE_PATH, 'model', f'DQN_Pong_episode{episode}.pt')
+
+        # Load model
+        agent = DQN_agent_test(num_image, devicename, model_path, in_channels=dictionary_size, action_space=action_space, memory_size=MEMORY_SIZE)
+        lca = tlca.TLCA(input_size, dictionary_size, th, dictionary, num_patch, device)
+
+        # Evaluate model
+        evaluator = Evaluator(env, agent, e_episode, num_patch, patch_size, frame_analyze, lca, num_image, dictionary_size, device)
+        reward_record[i, :], q_record[i, :], score_record[i, :] = evaluator.evaluate()
+
+        # Log progress
+        localtime = time.asctime(time.localtime(time.time()))
+        print(localtime)
+        print(f"Total time: {time.time() - start:.2f}s")
+        print(f"Episode: {episode} is done")
+        print(f"Average reward: {reward_record[i, :].mean()}")
+        print(f"Average Q-value: {q_record[i, :].mean()}")
+        start = time.time()
+
+        # Save evaluation results
+        eval_dir = os.path.join(MODEL_STORE_PATH, 'model', 'evaluation')
+        os.makedirs(eval_dir, exist_ok=True)
+
+        eval_file = os.path.join(eval_dir, f"reward_play_{target_size}_{frame_analyze}.h5")
+        with h5py.File(eval_file, 'w') as hdffile:
+            hdffile.create_dataset('reward', data=reward_record)
+            hdffile.create_dataset('q', data=q_record)
+            hdffile.create_dataset('score', data=score_record)
+
+        print(f"Evaluation results saved to {eval_dir}")
+
+        # Plot results for the last model
+        if i == len(selected_episodes) - 1:
+            evaluator.plot_average_reward()
 
 
-    
 def evaluate_LCA_DQN_best(th,overcomplete,patch_size,target_size,frame_analyze,devicename):
+    gym.register_envs(ale_py) #environment setup
     device=torch.device(devicename)
     dictfile=h5py.File('reward_play_'+str(target_size)+'_'+str(frame_analyze)+'.h5','r')
     reward=np.array([dictfile['reward']])[0,:,:]
     dictfile.close()
     
     reward_mean=np.mean(reward,axis=1)
-    p_str=str(40*int(np.where(reward_mean==reward_mean.max())[0]))
+    p_str = str(40 * int(np.where(reward_mean == reward_mean.max())[0][0]))
     
     # create environment
-    env = gym.make("ALE/Pong-v5",obs_type='grayscale') #,render_mode='human',frameskip=4
+    env = gym.make("ALE/Pong-v5", obs_type='grayscale', difficulty=0) # ,render_mode='human',frameskip=4
     action_space = env.action_space
     
     #get lca dictionary
@@ -666,11 +795,80 @@ def evaluate_LCA_DQN_best(th,overcomplete,patch_size,target_size,frame_analyze,d
     localtime = time.asctime( time.localtime(time.time()) )
     print (localtime)
     end=time.time()
-    print('total time',end-start)
+    print('total time', end - start)
     print('episode='+p_str+' is done')
     print('average reward='+str(reward_record.mean()))
     start=time.time()
-    
-      
-    
-  
+
+
+def run_game_with_h5(h5_file_path, th, overcomplete, patch_size, target_size, frame_analyze, devicename):
+    gym.register_envs(ale_py)
+    device = torch.device(devicename)
+
+    # Create environment
+    env = gym.make("ALE/Pong-v5", obs_type='grayscale', difficulty=0, frameskip=4, render_mode='human')
+    action_space = env.action_space
+
+    # Load LCA dictionary
+    dictfile = h5py.File(f'dict/dict{th}.h5', 'r')
+    dictionary = np.array([dictfile['dictionary']])[0, :, :]
+    dictfile.close()
+
+    num_image = int(target_size / patch_size)
+    input_size = dictionary.shape[0]
+    dictionary_size = dictionary.shape[1]
+    num_patch = int(num_image**2)
+
+    dictionary = torch.from_numpy(dictionary).to(device)
+
+    # Load the best model weights from the .h5 file
+    with h5py.File(h5_file_path, 'r') as h5file:
+        reward_data = h5file['reward'][:] if 'reward' in h5file else None
+        q_data = h5file['q'][:] if 'q' in h5file else None
+        score_data = h5file['score'][:] if 'score' in h5file else None
+
+    print("Loaded evaluation data from .h5 file:")
+    if reward_data is not None:
+        print(f"Reward data shape: {reward_data.shape}")
+    else:
+        print("Reward data is missing.")
+
+    if q_data is not None:
+        print(f"Q data shape: {q_data.shape}")
+    else:
+        print("Q data is missing.")
+
+    if score_data is not None:
+        print(f"Score data shape: {score_data.shape}")
+    else:
+        print("Score data is missing.")
+
+    # Find the best episode based on the highest average reward
+    if reward_data is not None:
+        best_episode_index = np.argmax(np.mean(reward_data, axis=1))
+        best_episode = 1000 + best_episode_index * 40  # Assuming episodes are saved every 40 steps
+        model_path = os.path.join(MODEL_STORE_PATH, 'model', f'DQN_Pong_episode{best_episode}.pt')
+
+        print(f"Using best model from episode {best_episode} at path: {model_path}")
+
+        # Initialize model and LCA
+        agent = DQN_agent_test(num_image, devicename, model_path, in_channels=dictionary_size, action_space=action_space, memory_size=MEMORY_SIZE)
+        lca = tlca.TLCA(input_size, dictionary_size, th, dictionary, num_patch, device)
+
+        # Run the game using the best model
+        evaluator = Evaluator(env, agent, e_episode, num_patch, patch_size, frame_analyze, lca, num_image, dictionary_size, device)
+        reward_record, q_record, score_record = evaluator.evaluate()
+
+        print("Game run completed.")
+        print(f"Average reward: {reward_record.mean()}")
+        print(f"Average Q-value: {q_record.mean()}")
+
+    else:
+        print("Cannot determine the best episode as reward data is missing.")
+
+    env.close()
+
+
+
+
+
