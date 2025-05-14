@@ -4,7 +4,6 @@ California State Polytechnic University, Pomona
 Dr. Sedat Ozer
 ## This is a Fork and expansion the work of rpchen0128. 
 
-LCA-DQN(with or without fovea) to play Atari Pong
 
 
 # How to run 
