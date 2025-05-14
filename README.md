@@ -1,5 +1,8 @@
-# LCA_DQN_fovea
-## This is a Fork of rpchen0128 repo. 
+# ECE4990: Deep Learning
+Aman Adhikari & Josiah Wiggins 
+California State Polytechnic University, Pomona
+Dr. Sedat Ozer
+## This is a Fork and expansion the work of rpchen0128. 
 
 LCA-DQN(with or without fovea) to play Atari Pong
 
