@@ -2,7 +2,7 @@
 Aman Adhikari & Josiah Wiggins 
 California State Polytechnic University, Pomona
 Dr. Sedat Ozer
-## This is a Fork and expansion the work of rpchen0128. 
+## This is a fork and expansion the work of rpchen0128. 
 
 
 
